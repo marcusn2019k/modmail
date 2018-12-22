@@ -39,11 +39,14 @@ import io
 import inspect
 from contextlib import redirect_stdout
 
+import modmail
+from modmail import Thread
 
-class Modmail(commands.Bot):
+class ModmailBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix=self.get_pre)
         self.uptime = datetime.datetime.utcnow()
+        self.threads = {}
         self._add_commands()
 
     def _add_commands(self):
@@ -78,6 +81,15 @@ class Modmail(commands.Bot):
         '''Returns the prefix.'''
         return bot.config.get('PREFIX') or 'm.'
 
+    @property
+    def guild_id(self):
+        return int(self.config.get('GUILD_ID'))
+    
+    @property
+    def guild(self):
+        g = discord.utils.get(self.guilds, id=self.guild_id)
+        return g
+
     async def on_connect(self):
         print('---------------')
         print('Modmail connected!')
@@ -87,15 +99,6 @@ class Modmail(commands.Bot):
             await self.change_presence(activity=discord.Game(status))
         else:
             print('No status set.')
-
-    @property
-    def guild_id(self):
-        return int(self.config.get('GUILD_ID'))
-    
-    @property
-    def guild(self):
-        g = discord.utils.get(self.guilds, id=self.guild_id)
-        return g
 
     async def on_ready(self):
         '''Bot startup, sets uptime.'''
@@ -109,11 +112,18 @@ class Modmail(commands.Bot):
         User ID: {self.user.id}
         ---------------
         '''))
-
+        for channel in self.guild.text_channels:
+            try:
+                thread = await Thread.from_channel(self, channel)
+                self.threads[channel.id] = thread
+                print(f'created thread: {thread}')
+            except ValueError:
+                pass
 
     async def on_message(self, message):
         if message.author.bot:
             return
+
         if isinstance(message.channel, discord.DMChannel):
             return await self.process_modmail(message)
 
@@ -145,6 +155,35 @@ class Modmail(commands.Bot):
                         if f'Moderator - {message_id}' == msg.embeds[0].footer.text:
                             await msg.delete()
                             break
+
+    async def process_modmail(self, message):
+        '''Processes messages sent to the bot.'''
+        em = discord.Embed(title='Message not sent!', color=discord.Color.red())
+        em.description = 'You have been blocked from using modmail.'
+
+        reaction = '🚫' if message.author.id in self.blocked else '✅'
+        await message.add_reaction(reaction)
+
+        try:
+            thread = await Thread.create(self, message.author)
+            await thread.send(message)
+        except modmail.BlockedUser:
+            await message.author.send(embed=em)
+
+    async def find_user_id_from_channel(self, channel):
+        if not channel.topic:
+            async for message in channel.history():
+                if message.embeds:
+                    em = message.embeds[0]
+                    matches = re.findall(r'<@(\d+)>', str(em.description))
+                    if matches:
+                        return int(matches[0])
+        else:
+            matches = re.findall(r'\d+', channel.topic)
+            if not matches: 
+                return None
+            else:
+                return matches[0]
 
     def overwrites(self, ctx, modrole=None):
         '''Permision overwrites for the guild.'''
@@ -229,6 +268,80 @@ class Modmail(commands.Bot):
                            'Blocked\n-------\n\n')
         await c.send(embed=self.help_embed(ctx.prefix))
         await ctx.send('Successfully set up server.')
+
+
+    @commands.command()
+    async def reply(self, ctx, *, msg=''):
+        '''Reply to users using this command.'''
+        ctx.message.content = msg
+        categ = ctx.channel.category
+
+        if categ is not None and categ.name == 'Mod Mail':
+            user_id = await self.find_user_id_from_channel(ctx.channel)
+            thread = self.threads.get(ctx.channel.id)
+            if thread:
+                await thread.reply(ctx.message, user_id=user_id)
+    
+    @commands.command()
+    async def contact(self, ctx, *, user: discord.Member):
+        '''Create a thread with a specified member.'''
+        categ = discord.utils.get(ctx.guild.categories, id=ctx.channel.category_id)
+        if categ is not None and categ.name == 'Mod Mail':
+            channel = await Thread.create(self, user, creator=ctx.author)
+            await ctx.send(f'Created thread {channel.mention}')
+
+    @commands.command(name="customstatus", aliases=['status', 'presence'])
+    @commands.has_permissions(administrator=True)
+    async def _status(self, ctx, *, message):
+        '''Set a custom playing status for the bot.'''
+        if message == 'clear':
+            return await self.change_presence(activity=None)
+        await self.change_presence(activity=discord.Game(message))
+        await ctx.send(f"Changed status to **{message}**")
+
+    @commands.command()
+    @commands.has_permissions(manage_channels=True)
+    async def block(self, ctx, user_id=None):
+        '''Block a user from using modmail.'''
+        if user_id is None:
+            matches = re.findall(r'\d+', str(ctx.channel.topic))
+            if matches:
+                user_id = matches[0]
+            else:
+                return await ctx.send('No User ID provided.')
+
+        categ = self.modmail_category
+        top_chan = categ.channels[0] #bot-info
+        topic = str(top_chan.topic)
+        topic += '\n' + user_id
+
+        if user_id not in top_chan.topic:  
+            await top_chan.edit(topic=topic)
+            await ctx.send('User successfully blocked!')
+        else:
+            await ctx.send('User is already blocked.')
+
+    @commands.command()
+    @commands.has_permissions(manage_channels=True)
+    async def unblock(self, ctx, user_id=None):
+        '''Unblocks a user from using modmail.'''
+        if user_id is None:
+            matches = re.findall(r'\d+', str(ctx.channel.topic))
+            if matches:
+                user_id = matches[0]
+            else:
+                return await ctx.send('No User ID provided.')
+
+        categ = self.modmail_category
+        top_chan = categ.channels[0] #bot-info
+        topic = str(top_chan.topic)
+        topic = topic.replace('\n'+user_id, '')
+
+        if user_id in top_chan.topic:
+            await top_chan.edit(topic=topic)
+            await ctx.send('User successfully unblocked!')
+        else:
+            await ctx.send('User is not already blocked.')
     
     @commands.command(name='snippets')
     @commands.has_permissions(manage_messages=True)
@@ -361,7 +474,6 @@ class Modmail(commands.Bot):
         days = lambda d: (' day ago.' if d == '1' else ' days ago.')
 
         created = str((time - user.created_at).days)
-        # em.add_field(name='Mention', value=user.mention)
         em.add_field(name='Registered', value=created + days(created))
         footer = 'User ID: '+str(user.id)
         em.set_footer(text=footer)
@@ -377,60 +489,8 @@ class Modmail(commands.Bot):
                 em.add_field(name='Roles', value=rolenames, inline=False)
         else:
             em.set_footer(text=footer+' | Note: this member is not part of this server.')
-        
-        
 
         return em
-
-    async def send_mail(self, message, channel, from_mod, delete_message=True):
-        author = message.author
-        em = discord.Embed()
-        em.description = message.content
-        em.timestamp = message.created_at
-
-        image_types = ['.png', '.jpg', '.gif', '.jpeg', '.webp']
-        is_image_url = lambda u: any(urlparse(u).path.endswith(x) for x in image_types)
-
-        delete_message = not bool(message.attachments) 
-        attachments = list(filter(lambda a: not is_image_url(a.url), message.attachments))
-
-        image_urls = [a.url for a in message.attachments]
-        image_urls.extend(re.findall(r'(https?://[^\s]+)', message.content))
-        image_urls = list(filter(is_image_url, image_urls))
-
-        if image_urls:
-            em.set_image(url=image_urls[0])
-
-        if attachments:
-            att = attachments[0]
-            em.add_field(name='File Attachment', value=f'[{att.filename}]({att.url})')
-
-        if from_mod:
-            em.color=discord.Color.green()
-            em.set_author(name=str(author), icon_url=author.avatar_url)
-            em.set_footer(text=f'Moderator - {message.id}')
-        else:
-            em.color=discord.Color.gold()
-            em.set_author(name=str(author), icon_url=author.avatar_url)
-            em.set_footer(text='User')
-
-        await channel.send(embed=em)
-
-        if delete_message:
-            try:
-                await message.delete()
-            except:
-                pass
-
-    async def process_reply(self, message, user_id=None):
-        user_id = user_id or int(re.findall(r'\d+', message.channel.topic)[0])
-        user = self.get_user(user_id)
-        if not user:
-            return await message.channel.send('This user does not have any mutual servers with the bot and is thus unreachable.')
-        await asyncio.gather(
-            self.send_mail(message, message.channel, from_mod=True),
-            self.send_mail(message, user, from_mod=True)
-        )
 
     def format_name(self, author, channels):
         name = author.name.lower()
@@ -446,154 +506,20 @@ class Modmail(commands.Bot):
         return new_name
 
     @property
-    def blocked_em(self):
-        em = discord.Embed(title='Message not sent!', color=discord.Color.red())
-        em.description = 'You have been blocked from using modmail.'
-        return em
+    def modmail_category(self):
+        if self.guild:
+            return discord.utils.get(self.guild.categories, name='Mod Mail')
 
-    async def process_modmail(self, message):
-        '''Processes messages sent to the bot.'''
-
-        guild = self.guild
-        categ = discord.utils.get(guild.categories, name='Mod Mail')
-        top_chan = categ.channels[0] #bot-info
-        blocked = top_chan.topic.split('Blocked\n-------')[1].strip().split('\n')
-        blocked = [x.strip() for x in blocked]
-        reaction = '🚫' if str(message.author.id) in blocked else '✅'
-
-        try:
-            await message.add_reaction(reaction)
-        except:
-            pass
-
-        if str(message.author.id) in blocked:
-            await message.author.send(embed=self.blocked_em)
-        else:
-            channel = await self.create_thread(message.author)
-            await self.send_mail(message, channel, from_mod=False)
-            
-
-    async def create_thread(self, user, *, creator=None):
-
-        guild = self.guild
-        topic = f'User ID: {user.id}'
-        channel = discord.utils.get(guild.text_channels, topic=topic)
-        categ = discord.utils.get(guild.categories, name='Mod Mail')
-        archives = discord.utils.get(guild.categories, name='Mod Mail Archives')
-
-        em = discord.Embed(title='Thanks for the message!')
-        em.description = 'The moderation team will get back to you as soon as possible!'
-        em.color = discord.Color.green()
-        
-        info_description = None
-
-        if creator:
-            em = discord.Embed(title='Modmail thread started')
-            em.description = f'{creator.mention} has started a modmail thread with you.'
-            em.color = discord.Color.green()
-
-            info_description = f'{creator.mention} has created a thread with {user.mention}'
-
-        mention = (self.config.get('MENTION') or '@here') if not creator else None
-
-
-        if channel is not None:
-            if channel.category is archives:
-                if creator: # thread appears to be closed 
-                    await user.send(embed=em)
-                await channel.edit(category=categ)
-                await channel.send(mention, embed=self.format_info(user, info_description))
-        else:
-            await user.send(embed=em)
-            channel = await guild.create_text_channel(
-                name=self.format_name(user, guild.text_channels),
-                category=categ
-                )
-            await channel.edit(topic=topic)
-            await channel.send(mention, embed=self.format_info(user, info_description))
-        
-        return channel
-
-    async def find_user_id_from_channel(self, channel):
-        async for message in channel.history():
-            if message.embeds:
-                em = message.embeds[0]
-                matches = re.findall(r'<@(\d+)>', str(em.description))
-                if matches:
-                    return int(matches[0])
-
-    @commands.command()
-    async def reply(self, ctx, *, msg=''):
-        '''Reply to users using this command.'''
-        ctx.message.content = msg
-
-        categ = discord.utils.get(ctx.guild.categories, id=ctx.channel.category_id)
-        if categ is not None and categ.name == 'Mod Mail':
-            if ctx.channel.topic and 'User ID:' in ctx.channel.topic:
-                await self.process_reply(ctx.message)
-            if not ctx.channel.topic:
-                user_id = await self.find_user_id_from_channel(ctx.channel)
-                if user_id:
-                    await self.process_reply(ctx.message, user_id=user_id)
+    @property
+    def archive_category(self):
+        if self.guild:
+            return discord.utils.get(self.guild.categories, name='Mod Mail Archives')
     
-    @commands.command()
-    async def contact(self, ctx, *, user: discord.Member):
-        '''Create a thread with a specified member.'''
-        categ = discord.utils.get(ctx.guild.categories, id=ctx.channel.category_id)
-        if categ is not None and categ.name == 'Mod Mail':
-            channel = await self.create_thread(user, creator=ctx.author)
-            await ctx.send(f'Created thread {channel.mention}')
-
-    @commands.command(name="customstatus", aliases=['status', 'presence'])
-    @commands.has_permissions(administrator=True)
-    async def _status(self, ctx, *, message):
-        '''Set a custom playing status for the bot.'''
-        if message == 'clear':
-            return await self.change_presence(activity=None)
-        await self.change_presence(activity=discord.Game(message))
-        await ctx.send(f"Changed status to **{message}**")
-
-    @commands.command()
-    @commands.has_permissions(manage_channels=True)
-    async def block(self, ctx, id=None):
-        '''Block a user from using modmail.'''
-        if id is None:
-            if 'User ID:' in str(ctx.channel.topic):
-                id = ctx.channel.topic.split('User ID: ')[1].strip()
-            else:
-                return await ctx.send('No User ID provided.')
-
-        categ = discord.utils.get(ctx.guild.categories, name='Mod Mail')
-        top_chan = categ.channels[0] #bot-info
-        topic = str(top_chan.topic)
-        topic += '\n' + id
-
-        if id not in top_chan.topic:  
-            await top_chan.edit(topic=topic)
-            await ctx.send('User successfully blocked!')
-        else:
-            await ctx.send('User is already blocked.')
-
-    @commands.command()
-    @commands.has_permissions(manage_channels=True)
-    async def unblock(self, ctx, id=None):
-        '''Unblocks a user from using modmail.'''
-        if id is None:
-            if 'User ID:' in str(ctx.channel.topic):
-                id = ctx.channel.topic.split('User ID: ')[1].strip()
-            else:
-                return await ctx.send('No User ID provided.')
-
-        categ = discord.utils.get(ctx.guild.categories, name='Mod Mail')
-        top_chan = categ.channels[0] #bot-info
-        topic = str(top_chan.topic)
-        topic = topic.replace('\n'+id, '')
-
-        if id in top_chan.topic:
-            await top_chan.edit(topic=topic)
-            await ctx.send('User successfully unblocked!')
-        else:
-            await ctx.send('User is not already blocked.')
+    @property
+    def blocked(self):
+        if self.modmail_category:
+            return re.findall(r'\d+', self.modmail_category.channels[0].topic)
+        
 
     @commands.command(hidden=True, name='eval')
     async def _eval(self, ctx, *, body: str):
@@ -665,5 +591,5 @@ class Modmail(commands.Bot):
         return content.strip('` \n')
         
 if __name__ == '__main__':
-    bot = Modmail()
+    bot = ModmailBot()
     bot.run(bot.token)
