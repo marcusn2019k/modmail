@@ -11,25 +11,13 @@
         "description": "The id for the server you are hosting this bot for.",
         "required": true
     },
-    "PREFIX": {
-        "description": "Command prefix to use.",
-        "required": false
-    },
-    "STATUS": {
-        "description": "Set a custom playing status for the bot.",
-        "required": false
-    },
-    "MENTION": {
-        "description": "A custom role/user to mention when creating a modmail thread. Default is @here",
-        "required": false
-    },
     "OWNERS": {
         "description": "Comma seperated user IDs of people that are allowed to use owner only commands. (eval and update)",
-        "required": false
+        "required": true
     },
-    "GITHUB_ACCESS_TOKEN": {
-        "description": "Github personal access token to enable use of the update command.",
-        "required": false
+    "MODMAIL_API_TOKEN": {
+        "description": "API token from https://modmail.tk",
+        "required": true
     }
   }
 }
