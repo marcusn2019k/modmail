@@ -4,12 +4,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# v2.9.0
+
+### Added
+- New command `note` will add a system message to your thread logs. This is useful for noting the context of a conversation.
 
 # v2.8.1
 
 ### Fixed
-- Fixed bug where thread logs were getting duplicated when using the contact command.
-- Fixed bug where the wrong key was used for logs which caused some `log` command log links point to a HTTP 404 Not Found.
+- Fixed bug where thread logs were getting duplicated when using the `contact` command.
+- Fixed bug where the wrong key was used for logs which caused some `log` command log links to point to an HTTP 404 Not Found.
   - A minor oversight from commit 1ba74d9.
 
 # v2.8.0
