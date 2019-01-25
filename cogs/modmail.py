@@ -2,6 +2,7 @@
 
 import datetime
 from typing import Optional, Union
+import asyncio
 
 import discord
 from discord.ext import commands
@@ -119,7 +120,7 @@ class Modmail:
     @commands.command()
     @commands.has_permissions(manage_channels=True)
     async def move(self, ctx, *, category: discord.CategoryChannel):
-        """Moves a thread to a specified cateogry."""
+        """Moves a thread to a specified category."""
         thread = await self.bot.threads.find(channel=ctx.channel)
         if not thread:
             return await ctx.send('This is not a modmail thread.')
@@ -301,6 +302,16 @@ class Modmail:
             return
         await ctx.channel.edit(nsfw=True)
         await ctx.message.add_reaction('✅')
+    
+    @commands.command()
+    async def loglink(self, ctx):
+        thread = await self.bot.threads.find(channel=ctx.channel)
+        if thread:
+            log_link = await self.bot.modmail_api.get_log_link(ctx.channel.id)
+            await ctx.send(embed=discord.Embed(
+                    color=discord.Color.blurple(), 
+                    description=log_link)
+                    )
 
     @commands.command(aliases=['threads'])
     @commands.has_permissions(manage_messages=True)
@@ -367,7 +378,6 @@ class Modmail:
         await session.run()
         
     @commands.command()
-    @trigger_typing
     async def reply(self, ctx, *, msg=''):
         """Reply to users using this command.
 
@@ -376,15 +386,25 @@ class Modmail:
         ctx.message.content = msg
         thread = await self.bot.threads.find(channel=ctx.channel)
         if thread:
+            await ctx.trigger_typing()
             await thread.reply(ctx.message)
     
     @commands.command()
-    @trigger_typing
+    async def anonreply(self, ctx, *, msg=''):
+        ctx.message.content = msg
+        thread = await self.bot.threads.find(channel=ctx.channel)
+        if thread:
+            await ctx.trigger_typing()
+            await thread.reply(ctx.message, anonymous=True)
+    
+    @commands.command()
     async def note(self, ctx, *, msg=''):
         """Take a note about the current thread, useful for noting context."""
         ctx.message.content = msg 
         thread = await self.bot.threads.find(channel=ctx.channel)
+
         if thread:
+            await ctx.trigger_typing()
             await thread.note(ctx.message)
 
     @commands.command()
@@ -419,8 +439,12 @@ class Modmail:
         if not linked_message_id:
             raise commands.UserInputError
         
-        await thread.edit_message(linked_message_id, new_message)
+        await asyncio.gather(
+            thread.edit_message(linked_message_id, new_message),
+            self.bot.modmail_api.edit_message(linked_message_id, new_message)
+        ) 
         await ctx.message.add_reaction('✅')
+        
 
     @commands.command()
     @trigger_typing
