@@ -22,7 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-__version__ = '2.12.1'
+__version__ = '2.12.2'
 
 import asyncio
 from datetime import datetime
@@ -130,7 +130,8 @@ class ModmailBot(Bot):
             self.load_extension(cog)
 
     async def is_owner(self, user):
-        allowed = [int(x) for x in str(self.config.get('owners', '0')).split(',')]
+        allowed = {int(x) for x in
+                   str(self.config.get('owners', '0')).split(',')}
         return user.id in allowed
 
     async def logout(self):
