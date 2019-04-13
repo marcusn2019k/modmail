@@ -361,7 +361,7 @@ class Thread(ThreadABC):
             tasks.append(message.channel.send(
                 embed=discord.Embed(
                     color=discord.Color.red(),
-                    description='Your message could not be delivered because '
+                    description='Your message could not be delivered as '
                                 'the recipient is only accepting direct '
                                 'messages from friends, or the bot was '
                                 'blocked by the recipient.'
@@ -587,22 +587,26 @@ class ThreadManager(ThreadManagerABC):
     def __getitem__(self, item):
         return self.cache[item]
 
-    async def find(self, *, recipient=None, channel=None):
+    async def find(self, *, recipient=None, channel=None, recipient_id=None):
         """Finds a thread from cache or from discord channel topics."""
         if recipient is None and channel is not None:
             return await self._find_from_channel(channel)
 
         thread = None
+
+        if recipient:
+            recipient_id = recipient.id
+
         try:
-            thread = self.cache[recipient.id]
+            thread = self.cache[recipient_id]
         except KeyError:
             channel = discord.utils.get(
                 self.bot.modmail_guild.text_channels,
-                topic=f'User ID: {recipient.id}'
+                topic=f'User ID: {recipient_id}'
             )
             if channel:
                 thread = Thread(self, recipient, channel)
-                self.cache[recipient.id] = thread
+                self.cache[recipient_id] = thread
                 thread.ready = True
         return thread
 
